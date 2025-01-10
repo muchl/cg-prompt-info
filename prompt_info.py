@@ -1,4 +1,8 @@
+import os
+import numpy as np
 import inspect, json
+import torch
+from pathlib import Path
 from nodes import LoadImage
 from folder_paths import get_annotated_filepath
 from PIL import Image
@@ -22,7 +26,7 @@ def insertAllInAndOut(prompt, extra, all_outputs=None):
         out = {}
         inp = {}
         type = node['type']
-        print(f"Node {node_id} ({type})")
+        #print(f"Node {node_id} ({type})")
         if all_outputs and 'outputs' in node:
             for i, output in enumerate(node['outputs']):
                 try:
@@ -80,7 +84,53 @@ class LoadImageWithInfo(LoadImage):
                 insertAllInAndOut(prompt, extra_pnginfo_loaded)
             
             return loaded + (json.dumps(extra_pnginfo_loaded['workflow']['values'], indent=2),)
-            
+         
+class LoadImagePathWithInfo:
+    CATEGORY = "prompt_info"
+    FUNCTION = "func"
+    OUTPUT_NODE = True
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "image_path": ("STRING", {"default": ""}),  # 文件路径
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE", "STRING")  # 单次返回一张图片和对应的 info
+    RETURN_NAMES = ("image", "info")
+
+    def func(self, image_path, reset=False):
+        # 逐一输出图片和对应的 info
+        image, info = self._load_image_and_info(image_path)
+        return image, info  # 使用生成器逐一返回
+
+    def _load_image_and_info(self, filepath):
+        """
+        加载图片及其元数据信息。
+        """
+        # 加载图片
+        loaded = LoadImage().load_image(filepath)
+        image = loaded[0]  # 获取图片张量
+
+        # 解析元数据
+        with Image.open(filepath) as img:
+            extra_pnginfo_loaded = img.text if hasattr(img, 'text') else {}
+
+            if 'workflow' in extra_pnginfo_loaded:
+                extra_pnginfo_loaded['workflow'] = json.loads(extra_pnginfo_loaded['workflow'])
+                prompt = json.loads(extra_pnginfo_loaded['prompt'])
+
+                if 'values' not in extra_pnginfo_loaded['workflow']:
+                    insertAllInAndOut(prompt, extra_pnginfo_loaded)
+
+                info = json.dumps(extra_pnginfo_loaded['workflow']['values'], indent=2)
+            else:
+                info = json.dumps({})  # 如果没有元数据，返回空字典
+
+        return image, info
+
 class ExtractInfo():
     CATEGORY = "prompt_info"
     FUNCTION = "func"
@@ -99,6 +149,7 @@ class ExtractInfo():
     RETURN_NAMES = ("string","float","int")
     def func(self, info, node_id, side, name, id):
         try:
+            # 尝试解析 JSON
             thing = json.loads(info)
         except json.JSONDecodeError:
             print("JSONDecodeError")
@@ -138,7 +189,7 @@ class ExtractInfo():
             return (thing, flt, None)
 
         return (thing, flt, nt)
-    
+
 class HuntInfo():
     CATEGORY = "prompt_info"
     FUNCTION = "func"
@@ -160,7 +211,5 @@ class HuntInfo():
             print("JSONDecodeError")
 
         return ()
-        
 
-
-CLAZZES = [AddInfo, LoadImageWithInfo, ExtractInfo, HuntInfo]
+CLAZZES = [AddInfo, LoadImageWithInfo, LoadImagePathWithInfo, ExtractInfo, HuntInfo]
